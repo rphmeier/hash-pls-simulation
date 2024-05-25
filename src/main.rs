@@ -103,18 +103,16 @@ fn churn(map: &mut RobinHood, keys: &mut KeySet, count: usize) -> Record {
 
 fn overwrite_existing(map: &mut RobinHood, keys: &mut KeySet, count: usize) -> Record {
     let mut probes = Histogram::new(3).unwrap();
-    let mut writes = Histogram::new(3).unwrap();
 
     let load_factor = map.load_factor();
     for _ in 0..count {
         let update = map.insert(keys.existing());
         probes.record(update.total_probes as u64).unwrap();
-        writes.record(update.total_writes as u64).unwrap();
     }
 
     Record {
         load_factor,
-        histograms: vec![probes, writes],
+        histograms: vec![probes],
     }
 }
 
