@@ -1,5 +1,4 @@
-use bitvec::prelude::*;
-use csv::{Writer, WriterBuilder};
+use csv::Writer;
 use hdrhistogram::Histogram;
 use rand::prelude::*;
 use std::fs::File;
@@ -7,6 +6,7 @@ use std::fs::File;
 use robinhood::RobinHood;
 
 mod robinhood;
+mod meta_map;
 
 #[derive(Default)]
 struct KeySet {
@@ -67,11 +67,11 @@ fn probe(map: &RobinHood, keys: &KeySet, count: usize) -> Record {
     let load_factor = map.load_factor();
     for _ in 0..count {
         let probe = map.probe(keys.existing());
-        present.record(probe.psl as u64).unwrap();
+        present.record(probe.probes as u64).unwrap();
     }
     for _ in 0..count {
         let probe = map.probe(keys.nonexisting());
-        absent.record(probe.psl as u64).unwrap();
+        absent.record(probe.probes as u64).unwrap();
     }
 
     Record {
@@ -114,38 +114,6 @@ fn overwrite_existing(map: &mut RobinHood, keys: &mut KeySet, count: usize) -> R
         load_factor,
         histograms: vec![probes],
     }
-}
-
-fn print_probe_data(probe_data: Histogram<u64>) {
-    println!("MEAN\t| probes={}", probe_data.mean());
-    println!("50th\t| probes={}", probe_data.value_at_percentile(50.0));
-    println!("95th\t| probes={}", probe_data.value_at_percentile(95.0));
-    println!("99th\t| probes={}", probe_data.value_at_percentile(99.0));
-    println!("----------");
-}
-
-fn print_data(probe_data: Histogram<u64>, write_data: Histogram<u64>) {
-    println!(
-        "MEAN\t| probes={} | writes={}",
-        probe_data.mean(),
-        write_data.mean()
-    );
-    println!(
-        "50th\t| probes={} | writes={}",
-        probe_data.value_at_percentile(50.0),
-        write_data.value_at_percentile(50.0)
-    );
-    println!(
-        "95th\t| probes={} | writes={}",
-        probe_data.value_at_percentile(95.0),
-        write_data.value_at_percentile(95.0)
-    );
-    println!(
-        "99th\t| probes={} | writes={}",
-        probe_data.value_at_percentile(99.0),
-        write_data.value_at_percentile(99.0)
-    );
-    println!("----------");
 }
 
 struct Record {
