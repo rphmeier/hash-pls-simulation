@@ -69,7 +69,7 @@ trait Map {
 
 fn grow(map: &mut dyn Map, keys: &mut KeySet, increment: f64) -> Record {
     let mut probes = Histogram::new(3).unwrap();
-    let mut writes = Histogram::new(3).unwrap();
+    let mut writes = Histogram::new_with_bounds(1, u64::max_value(), 3).unwrap();
 
     let initial_load = map.load_factor();
     let load_target = initial_load + increment;
@@ -110,7 +110,7 @@ fn probe(map: &dyn Map, keys: &KeySet, count: usize) -> Record {
 
 fn churn(map: &mut dyn Map, keys: &mut KeySet, count: usize) -> Record {
     let mut probes = Histogram::new(3).unwrap();
-    let mut writes = Histogram::new(3).unwrap();
+    let mut writes = Histogram::new_with_bounds(1, u64::max_value(), 3).unwrap();
 
     let load_factor = map.load_factor();
     for _ in 0..count {
@@ -129,28 +129,13 @@ fn churn(map: &mut dyn Map, keys: &mut KeySet, count: usize) -> Record {
     }
 }
 
-fn overwrite_existing(map: &mut dyn Map, keys: &mut KeySet, count: usize) -> Record {
-    let mut probes = Histogram::new(3).unwrap();
-
-    let load_factor = map.load_factor();
-    for _ in 0..count {
-        let update = map.insert(keys.existing());
-        probes.record(update.total_probes as u64).unwrap();
-    }
-
-    Record {
-        load_factor,
-        histograms: vec![probes],
-    }
-}
-
 struct Record {
     load_factor: f64,
     histograms: Vec<Histogram<u64>>,
 }
 
 impl Record {
-    fn write(&self, writer: &mut Writer<File>, map_spec: MapSpec, ) {
+    fn write(&self, writer: &mut Writer<File>, map_spec: MapSpec) {
         let mut csv_data = vec![
             format!("{:.2}", self.load_factor),
             format!("{}", map_spec.size()),
@@ -231,7 +216,7 @@ fn grow_test(writers: &mut Writers, map_spec: MapSpec) {
 }
 
 fn probe_test(writers: &mut Writers, map_spec: MapSpec) {
-    const INCREMENT: f64 = 0.1;
+    const INCREMENT: f64 = 0.05;
     const MAX_LOAD: f64 = 0.9;
 
     let mut load = 0.1;
@@ -247,7 +232,7 @@ fn probe_test(writers: &mut Writers, map_spec: MapSpec) {
 }
 
 fn churn_test(writers: &mut Writers, map_spec: MapSpec) {
-    const INCREMENT: f64 = 0.1;
+    const INCREMENT: f64 = 0.05;
     const MAX_LOAD: f64 = 0.9;
 
     let mut load = 0.1;
