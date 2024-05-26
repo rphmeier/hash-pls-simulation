@@ -5,8 +5,8 @@ use std::fs::File;
 
 use robinhood::RobinHood;
 
-mod robinhood;
 mod meta_map;
+mod robinhood;
 
 #[derive(Default)]
 struct KeySet {
@@ -154,9 +154,7 @@ impl Record {
 
         csv_data.extend(histogram_data);
 
-        writer
-            .write_record(csv_data)
-            .unwrap();
+        writer.write_record(csv_data).unwrap();
 
         writer.flush().unwrap();
     }
@@ -198,7 +196,7 @@ impl MapSpec {
 
     fn meta_bits(&self) -> usize {
         match *self {
-            MapSpec::RobinHood(meta_bits) => meta_bits
+            MapSpec::RobinHood(meta_bits) => meta_bits,
         }
     }
 }

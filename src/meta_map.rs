@@ -28,10 +28,12 @@ impl MetaMap {
     }
 
     pub fn set_full(&mut self, bucket: usize, metadata: Metadata) {
-        if self.bits == 0 { return }
+        if self.bits == 0 {
+            return;
+        }
         if self.bits == 1 {
             self.bitvec.set(bucket, true);
-            return
+            return;
         }
 
         let bits_remaining = self.bits - 1;
@@ -55,10 +57,12 @@ impl MetaMap {
     }
 
     pub fn set_empty(&mut self, bucket: usize) {
-        if self.bits == 0 { return }
+        if self.bits == 0 {
+            return;
+        }
         if self.bits == 1 {
             self.bitvec.set(bucket, false);
-            return
+            return;
         }
 
         self.bitvec.set(bucket * self.bits, false);
@@ -68,10 +72,12 @@ impl MetaMap {
     }
 
     pub fn set_tombstone(&mut self, bucket: usize) {
-        if self.bits == 0 { return }
+        if self.bits == 0 {
+            return;
+        }
         if self.bits == 1 {
             self.bitvec.set(bucket, true);
-            return
+            return;
         }
 
         self.bitvec.set(bucket * self.bits, false);
@@ -82,7 +88,9 @@ impl MetaMap {
 
     // true means definitely empty.
     pub fn hint_empty(&self, bucket: usize) -> bool {
-        if self.bits == 0 { return false }
+        if self.bits == 0 {
+            return false;
+        }
         if self.bits == 1 {
             return !self.bitvec.get(bucket).unwrap();
         }
@@ -94,31 +102,32 @@ impl MetaMap {
 
     // true means definitely a tombstone.
     pub fn hint_tombstone(&self, bucket: usize) -> bool {
-        if self.bits <= 1 { return false }
+        if self.bits <= 1 {
+            return false;
+        }
 
         let start = bucket * self.bits;
         let end = start + self.bits;
 
-        !self.bitvec.get(start).unwrap()
-            && self.bitvec[start + 1..end].all()
+        !self.bitvec.get(start).unwrap() && self.bitvec[start + 1..end].all()
     }
 
     pub fn hint_psl(&self, bucket: usize) -> Option<PslHint> {
         if self.bits == 0 {
-            return None
+            return None;
         }
         if self.bits == 1 {
             return if *self.bitvec.get(bucket).unwrap() {
                 Some(PslHint::AtLeast(1))
             } else {
                 None
-            }
+            };
         }
 
         let start = bucket * self.bits;
         let end = start + self.bits;
         if *self.bitvec.get(start).unwrap() {
-            let psl_bits = &self.bitvec[start + 1 .. end];
+            let psl_bits = &self.bitvec[start + 1..end];
             if psl_bits.all() {
                 Some(PslHint::AtLeast(1 << self.bits - 1))
             } else {
@@ -130,9 +139,11 @@ impl MetaMap {
     }
 
     pub fn hint_match(&self, bucket: usize, raw_hash: u64) -> bool {
-        if self.bits == 0 { return false }
+        if self.bits == 0 {
+            return false;
+        }
         if self.bits == 1 {
-            return *self.bitvec.get(bucket).unwrap()
+            return *self.bitvec.get(bucket).unwrap();
         }
 
         let bits_remaining = self.bits - 1;
@@ -141,7 +152,7 @@ impl MetaMap {
 
         *self.bitvec.get(start).unwrap() && {
             let high_bits = &raw_hash.view_bits::<Msb0>()[..bits_remaining];
-            &self.bitvec[start + 1 .. end] == high_bits
+            &self.bitvec[start + 1..end] == high_bits
         }
     }
 }

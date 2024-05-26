@@ -1,6 +1,6 @@
-use ahash::RandomState;
+use crate::meta_map::{MetaMap, Metadata, PslHint};
 use crate::{Map, Probe, Update};
-use crate::meta_map::{MetaMap, PslHint, Metadata};
+use ahash::RandomState;
 
 // dummy hash-set for u64 keys.
 //
@@ -11,7 +11,7 @@ pub struct RobinHood {
     meta: MetaMap,
     len: usize,
 }
- 
+
 impl RobinHood {
     pub fn new(capacity: usize, meta_bits: usize) -> Self {
         RobinHood {
@@ -62,28 +62,30 @@ impl Map for RobinHood {
         let mut bucket = self.bucket_for(key);
         loop {
             match self.meta.hint_psl(bucket) {
-                None if self.meta.hint_empty(bucket) => return Probe {
-                    contained: false,
-                    probes,
-                },
+                None if self.meta.hint_empty(bucket) => {
+                    return Probe {
+                        contained: false,
+                        probes,
+                    }
+                }
                 None => {}
                 Some(PslHint::Exact(bucket_psl)) => {
                     if bucket_psl < psl {
                         return Probe {
                             contained: false,
                             probes,
-                        }
+                        };
                     } else if bucket_psl > psl {
                         psl += 1;
                         bucket = (bucket + 1) % self.buckets.len();
-                        continue
+                        continue;
                     }
                 }
                 Some(PslHint::AtLeast(bucket_psl)) => {
                     if bucket_psl > psl {
                         psl += 1;
                         bucket = (bucket + 1) % self.buckets.len();
-                        continue
+                        continue;
                     }
                 }
             }
@@ -135,7 +137,7 @@ impl Map for RobinHood {
                 None if self.meta.hint_empty(bucket) => {
                     self.set_bucket(bucket, active_key, psl);
                     return update;
-                },
+                }
                 None => false,
                 Some(PslHint::Exact(bucket_psl)) => bucket_psl >= psl,
                 Some(PslHint::AtLeast(bucket_psl)) => bucket_psl >= psl,
@@ -143,7 +145,7 @@ impl Map for RobinHood {
 
             if skip {
                 psl += 1;
-                continue
+                continue;
             }
 
             update.total_probes += 1;
@@ -197,7 +199,7 @@ impl Map for RobinHood {
             let next_bucket = (bucket + 1) % self.buckets.len();
 
             if let Some(PslHint::Exact(1)) = self.meta.hint_psl(next_bucket) {
-                return update
+                return update;
             }
 
             update.total_probes += 1;
@@ -205,7 +207,9 @@ impl Map for RobinHood {
                 None => return update,
                 Some(k) => {
                     let shift_psl = self.psl_of(k, next_bucket);
-                    if shift_psl == 1 { return update }
+                    if shift_psl == 1 {
+                        return update;
+                    }
 
                     self.clear_bucket(next_bucket);
                     (k, shift_psl - 1)
