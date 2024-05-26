@@ -1,23 +1,6 @@
 use ahash::RandomState;
+use crate::{Map, Probe, Update};
 use crate::meta_map::{MetaMap, PslHint, Metadata};
-
-const META_BITS: usize = 1;
-
-pub struct Probe {
-    // whether the key was contained.
-    pub contained: bool,
-    // number of probes needed.
-    pub probes: usize,
-}
-
-// record of an update procedure.
-pub struct Update {
-    // the number of probes made, in total.
-    pub total_probes: usize,
-    // the number of writes made, in total.
-    // the number of keys which were moved by "robin hood" is equal to this minus 1.
-    pub total_writes: usize,
-}
 
 // dummy hash-set for u64 keys.
 //
@@ -28,44 +11,62 @@ pub struct RobinHood {
     meta: MetaMap,
     len: usize,
 }
-
+ 
 impl RobinHood {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, meta_bits: usize) -> Self {
         RobinHood {
             hasher: RandomState::new(),
             buckets: vec![None; capacity],
-            meta: MetaMap::new(capacity, META_BITS),
+            meta: MetaMap::new(capacity, meta_bits),
             len: 0,
         }
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.buckets.len()
     }
 
     fn bucket_for(&self, key: u64) -> usize {
         (self.hasher.hash_one(key) % (self.buckets.len() as u64)) as usize
     }
 
-    pub fn load_factor(&self) -> f64 {
-        (self.len as f64) / (self.buckets.len() as f64)
+    fn psl_of(&self, key: u64, bucket: usize) -> usize {
+        let home = self.bucket_for(key);
+        1 + if bucket < home {
+            (bucket + self.buckets.len()) - home
+        } else {
+            bucket - home
+        }
     }
 
-    pub fn probe(&self, key: u64) -> Probe {
+    fn set_bucket(&mut self, bucket: usize, key: u64, psl: usize) {
+        self.buckets[bucket] = Some(key);
+        self.meta.set_full(bucket, Metadata::Psl(psl));
+    }
+
+    fn clear_bucket(&mut self, bucket: usize) {
+        self.buckets[bucket] = None;
+        self.meta.set_empty(bucket);
+    }
+}
+
+impl Map for RobinHood {
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn capacity(&self) -> usize {
+        self.buckets.len()
+    }
+
+    fn probe(&self, key: u64) -> Probe {
         let mut psl = 1;
         let mut probes = 0;
 
         let mut bucket = self.bucket_for(key);
         loop {
             match self.meta.hint_psl(bucket) {
-                None => return Probe {
+                None if self.meta.hint_empty(bucket) => return Probe {
                     contained: false,
                     probes,
                 },
+                None => {}
                 Some(PslHint::Exact(bucket_psl)) => {
                     if bucket_psl < psl {
                         return Probe {
@@ -116,27 +117,7 @@ impl RobinHood {
         }
     }
 
-    fn psl_of(&self, key: u64, bucket: usize) -> usize {
-        let home = self.bucket_for(key);
-        1 + if bucket < home {
-            (bucket + self.buckets.len()) - home
-        } else {
-            bucket - home
-        }
-    }
-
-    fn set_bucket(&mut self, bucket: usize, key: u64, psl: usize) {
-        self.buckets[bucket] = Some(key);
-        self.meta.set_full(bucket, Metadata::Psl(psl));
-    }
-
-    fn clear_bucket(&mut self, bucket: usize) {
-        self.buckets[bucket] = None;
-        self.meta.set_empty(bucket);
-    }
-
-    // insert a key
-    pub fn insert(&mut self, key: u64) -> Update {
+    fn insert(&mut self, key: u64) -> Update {
         let mut update = Update {
             total_probes: 0,
             total_writes: 1,
@@ -151,10 +132,11 @@ impl RobinHood {
             let bucket = (home_bucket + psl - 1) % self.buckets.len();
 
             let skip = match self.meta.hint_psl(bucket) {
-                None => {
+                None if self.meta.hint_empty(bucket) => {
                     self.set_bucket(bucket, active_key, psl);
                     return update;
                 },
+                None => false,
                 Some(PslHint::Exact(bucket_psl)) => bucket_psl >= psl,
                 Some(PslHint::AtLeast(bucket_psl)) => bucket_psl >= psl,
             };
@@ -169,6 +151,7 @@ impl RobinHood {
                 self.set_bucket(bucket, active_key, psl);
                 return update;
             }
+
             let contained_key = self.buckets[bucket].unwrap();
             if contained_key == active_key {
                 if active_key == key {
@@ -193,8 +176,7 @@ impl RobinHood {
         }
     }
 
-    // remove a key from the map.
-    pub fn remove(&mut self, key: u64) -> Update {
+    fn remove(&mut self, key: u64) -> Update {
         let probe = self.probe(key);
         let mut update = Update {
             total_probes: probe.probes,
@@ -224,6 +206,8 @@ impl RobinHood {
                 Some(k) => {
                     let shift_psl = self.psl_of(k, next_bucket);
                     if shift_psl == 1 { return update }
+
+                    self.clear_bucket(next_bucket);
                     (k, shift_psl - 1)
                 }
             };

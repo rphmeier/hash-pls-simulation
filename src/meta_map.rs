@@ -89,7 +89,7 @@ impl MetaMap {
 
         let start = bucket * self.bits;
         let end = start + self.bits;
-        self.bitvec[start..end].all()
+        self.bitvec[start..end].not_all()
     }
 
     // true means definitely a tombstone.
@@ -103,7 +103,6 @@ impl MetaMap {
             && self.bitvec[start + 1..end].all()
     }
 
-    // `None` means definitely empty
     pub fn hint_psl(&self, bucket: usize) -> Option<PslHint> {
         if self.bits == 0 {
             return None

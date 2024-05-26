@@ -39,7 +39,35 @@ impl KeySet {
     }
 }
 
-fn grow(map: &mut RobinHood, keys: &mut KeySet, increment: f64) -> Record {
+struct Probe {
+    // whether the key was contained.
+    contained: bool,
+    // number of probes _of buckets_, not metadata, needed.
+    probes: usize,
+}
+
+// record of an update procedure.
+struct Update {
+    // the number of probes _of buckets_ made, in total.
+    total_probes: usize,
+    // the number of writes to buckets made, in total.
+    // the number of keys which were moved by "robin hood" is equal to this minus 1.
+    total_writes: usize,
+}
+
+trait Map {
+    fn load_factor(&self) -> f64 {
+        self.len() as f64 / self.capacity() as f64
+    }
+    fn len(&self) -> usize;
+    fn capacity(&self) -> usize;
+
+    fn probe(&self, key: u64) -> Probe;
+    fn insert(&mut self, key: u64) -> Update;
+    fn remove(&mut self, key: u64) -> Update;
+}
+
+fn grow(map: &mut dyn Map, keys: &mut KeySet, increment: f64) -> Record {
     let mut probes = Histogram::new(3).unwrap();
     let mut writes = Histogram::new(3).unwrap();
 
@@ -60,7 +88,7 @@ fn grow(map: &mut RobinHood, keys: &mut KeySet, increment: f64) -> Record {
     }
 }
 
-fn probe(map: &RobinHood, keys: &KeySet, count: usize) -> Record {
+fn probe(map: &dyn Map, keys: &KeySet, count: usize) -> Record {
     let mut present = Histogram::new(3).unwrap();
     let mut absent = Histogram::new(3).unwrap();
 
@@ -80,7 +108,7 @@ fn probe(map: &RobinHood, keys: &KeySet, count: usize) -> Record {
     }
 }
 
-fn churn(map: &mut RobinHood, keys: &mut KeySet, count: usize) -> Record {
+fn churn(map: &mut dyn Map, keys: &mut KeySet, count: usize) -> Record {
     let mut probes = Histogram::new(3).unwrap();
     let mut writes = Histogram::new(3).unwrap();
 
@@ -101,7 +129,7 @@ fn churn(map: &mut RobinHood, keys: &mut KeySet, count: usize) -> Record {
     }
 }
 
-fn overwrite_existing(map: &mut RobinHood, keys: &mut KeySet, count: usize) -> Record {
+fn overwrite_existing(map: &mut dyn Map, keys: &mut KeySet, count: usize) -> Record {
     let mut probes = Histogram::new(3).unwrap();
 
     let load_factor = map.load_factor();
@@ -122,7 +150,12 @@ struct Record {
 }
 
 impl Record {
-    fn write(&self, writer: &mut Writer<File>) {
+    fn write(&self, writer: &mut Writer<File>, map_spec: MapSpec, ) {
+        let mut csv_data = vec![
+            format!("{:.2}", self.load_factor),
+            format!("{}", map_spec.size()),
+            format!("{}", map_spec.meta_bits()),
+        ];
         let histogram_data = self.histograms.iter().flat_map(|h| {
             vec![
                 h.mean(),
@@ -133,8 +166,11 @@ impl Record {
             .into_iter()
             .map(|value| format!("{value:.2}"))
         });
+
+        csv_data.extend(histogram_data);
+
         writer
-            .write_record(std::iter::once(format!("{:.2}", self.load_factor)).chain(histogram_data))
+            .write_record(csv_data)
             .unwrap();
 
         writer.flush().unwrap();
@@ -145,7 +181,6 @@ struct Writers {
     grow: Writer<File>,
     probe: Writer<File>,
     churn: Writer<File>,
-    overwrite: Writer<File>,
 }
 
 impl Writers {
@@ -154,80 +189,87 @@ impl Writers {
             grow: Writer::from_path(format!("out/grow_{name}.csv")).unwrap(),
             probe: Writer::from_path(format!("out/probe_{name}.csv")).unwrap(),
             churn: Writer::from_path(format!("out/churn_{name}.csv")).unwrap(),
-            overwrite: Writer::from_path(format!("out/overwrite_{name}.csv")).unwrap(),
         }
     }
 }
 
 const SIZE: usize = 1 << 20;
 
-fn grow_test(writers: &mut Writers) {
+#[derive(Clone, Copy)]
+enum MapSpec {
+    RobinHood(usize),
+}
+
+impl MapSpec {
+    fn build(&self) -> Box<dyn Map> {
+        match *self {
+            MapSpec::RobinHood(meta_bits) => Box::new(RobinHood::new(SIZE, meta_bits)),
+        }
+    }
+
+    fn size(&self) -> usize {
+        SIZE
+    }
+
+    fn meta_bits(&self) -> usize {
+        match *self {
+            MapSpec::RobinHood(meta_bits) => meta_bits
+        }
+    }
+}
+
+fn grow_test(writers: &mut Writers, map_spec: MapSpec) {
     const INCREMENT: f64 = 0.01;
     const MAX_LOAD: f64 = 0.95;
 
-    let mut map = RobinHood::new(SIZE);
+    let mut map = map_spec.build();
     let mut key_set = KeySet::default();
     while map.load_factor() + INCREMENT < MAX_LOAD {
-        let record = grow(&mut map, &mut key_set, INCREMENT);
-        record.write(&mut writers.grow);
+        let record = grow(&mut *map, &mut key_set, INCREMENT);
+        record.write(&mut writers.grow, map_spec);
     }
 }
 
-fn probe_test(writers: &mut Writers) {
+fn probe_test(writers: &mut Writers, map_spec: MapSpec) {
     const INCREMENT: f64 = 0.1;
     const MAX_LOAD: f64 = 0.9;
 
     let mut load = 0.1;
     while load <= MAX_LOAD {
-        let mut map = RobinHood::new(SIZE);
+        let mut map = map_spec.build();
         let mut key_set = KeySet::default();
-        let _ = grow(&mut map, &mut key_set, load);
+        let _ = grow(&mut *map, &mut key_set, load);
 
-        let record = probe(&map, &key_set, 10_000);
-        record.write(&mut writers.probe);
+        let record = probe(&*map, &key_set, 10_000);
+        record.write(&mut writers.probe, map_spec);
         load += INCREMENT;
     }
 }
 
-fn churn_test(writers: &mut Writers) {
+fn churn_test(writers: &mut Writers, map_spec: MapSpec) {
     const INCREMENT: f64 = 0.1;
     const MAX_LOAD: f64 = 0.9;
 
     let mut load = 0.1;
     while load <= MAX_LOAD {
-        let mut map = RobinHood::new(SIZE);
+        let mut map = map_spec.build();
         let mut key_set = KeySet::default();
-        let _ = grow(&mut map, &mut key_set, load);
+        let _ = grow(&mut *map, &mut key_set, load);
 
-        let record = churn(&mut map, &mut key_set, 10_000);
-        record.write(&mut writers.churn);
-        load += INCREMENT;
-    }
-}
-
-fn overwrite_test(writers: &mut Writers) {
-    const INCREMENT: f64 = 0.1;
-    const MAX_LOAD: f64 = 0.9;
-
-    let mut load = 0.1;
-    while load <= MAX_LOAD {
-        let mut map = RobinHood::new(SIZE);
-        let mut key_set = KeySet::default();
-        let _ = grow(&mut map, &mut key_set, load);
-
-        let record = overwrite_existing(&mut map, &mut key_set, 10_000);
-        record.write(&mut writers.overwrite);
-
+        let record = churn(&mut *map, &mut key_set, 10_000);
+        record.write(&mut writers.churn, map_spec);
         load += INCREMENT;
     }
 }
 
 fn main() {
     std::fs::create_dir_all("out").unwrap();
-    let mut writers = Writers::build(format!("robinhood"));
 
-    grow_test(&mut writers);
-    probe_test(&mut writers);
-    churn_test(&mut writers);
-    overwrite_test(&mut writers);
+    let mut writers = Writers::build(format!("robinhood"));
+    for meta_bits in [0, 1, 2, 4, 8] {
+        let map_spec = MapSpec::RobinHood(meta_bits);
+        grow_test(&mut writers, map_spec);
+        probe_test(&mut writers, map_spec);
+        churn_test(&mut writers, map_spec);
+    }
 }
