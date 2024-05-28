@@ -61,7 +61,6 @@ def make_plot(plot_filename, csv_data, plot_names):
     for (i, (plot_name, data_name)) in zip(numpy.ndindex(ax.shape), plot_names):
         plot_data = csv_data[data_name]
 
-        load_factors = sorted(list(set(x[0] for x in plot_data)))
         meta_bit_counts = sorted(list(set(x[1] for x in plot_data)))
     
         ax[i].set(ylabel="operations")
@@ -69,6 +68,12 @@ def make_plot(plot_filename, csv_data, plot_names):
         ax[i].set_title(plot_name)
 
         for meta_bits in meta_bit_counts:
+            load_factors = set()
+            for (l, b) in plot_data:
+                if b == meta_bits:
+                    load_factors.add(l)
+
+            load_factors = sorted(list(load_factors))
             data = [plot_data[(load_factor, meta_bits)] for load_factor in load_factors]
             ax[i].plot(load_factors, data, label=f"{meta_bits} meta bits" if i == (0, 0) else "")
         

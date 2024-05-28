@@ -123,6 +123,7 @@ impl Map for RobinHood {
         let mut update = Update {
             total_probes: 0,
             total_writes: 1,
+            completed: true,
         };
 
         let mut home_bucket = self.bucket_for(key);
@@ -183,6 +184,7 @@ impl Map for RobinHood {
         let mut update = Update {
             total_probes: probe.probes,
             total_writes: 0,
+            completed: true,
         };
 
         if !probe.contained {

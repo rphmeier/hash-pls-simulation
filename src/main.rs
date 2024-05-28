@@ -3,8 +3,10 @@ use hdrhistogram::Histogram;
 use rand::prelude::*;
 use std::fs::File;
 
+use cuckoo::Cuckoo;
 use robinhood::RobinHood;
 
+mod cuckoo;
 mod meta_map;
 mod robinhood;
 
@@ -53,6 +55,8 @@ struct Update {
     // the number of writes to buckets made, in total.
     // the number of keys which were moved by "robin hood" is equal to this minus 1.
     total_writes: usize,
+    // Whether the update completed.
+    completed: bool,
 }
 
 trait Map {
@@ -67,7 +71,7 @@ trait Map {
     fn remove(&mut self, key: u64) -> Update;
 }
 
-fn grow(map: &mut dyn Map, keys: &mut KeySet, increment: f64) -> Record {
+fn grow(map: &mut dyn Map, keys: &mut KeySet, increment: f64) -> Option<Record> {
     let mut probes = Histogram::new(3).unwrap();
     let mut writes = Histogram::new_with_bounds(1, u64::max_value(), 3).unwrap();
 
@@ -78,14 +82,19 @@ fn grow(map: &mut dyn Map, keys: &mut KeySet, increment: f64) -> Record {
             break;
         }
         let update = map.insert(keys.push());
+
+        if !update.completed {
+            return None;
+        }
+
         probes.record(update.total_probes as u64).unwrap();
         writes.record(update.total_writes as u64).unwrap();
     }
 
-    Record {
+    Some(Record {
         load_factor: initial_load,
         histograms: vec![probes, writes],
-    }
+    })
 }
 
 fn probe(map: &dyn Map, keys: &KeySet, count: usize) -> Record {
@@ -96,10 +105,12 @@ fn probe(map: &dyn Map, keys: &KeySet, count: usize) -> Record {
     for _ in 0..count {
         let probe = map.probe(keys.existing());
         present.record(probe.probes as u64).unwrap();
+        assert!(probe.contained);
     }
     for _ in 0..count {
         let probe = map.probe(keys.nonexisting());
         absent.record(probe.probes as u64).unwrap();
+        assert!(!probe.contained);
     }
 
     Record {
@@ -181,12 +192,14 @@ const SIZE: usize = 1 << 20;
 #[derive(Clone, Copy)]
 enum MapSpec {
     RobinHood(usize),
+    Cuckoo(usize),
 }
 
 impl MapSpec {
     fn build(&self) -> Box<dyn Map> {
         match *self {
             MapSpec::RobinHood(meta_bits) => Box::new(RobinHood::new(SIZE, meta_bits)),
+            MapSpec::Cuckoo(meta_bits) => Box::new(Cuckoo::new(SIZE, meta_bits)),
         }
     }
 
@@ -197,6 +210,7 @@ impl MapSpec {
     fn meta_bits(&self) -> usize {
         match *self {
             MapSpec::RobinHood(meta_bits) => meta_bits,
+            MapSpec::Cuckoo(meta_bits) => meta_bits,
         }
     }
 }
@@ -208,8 +222,11 @@ fn grow_test(writers: &mut Writers, map_spec: MapSpec) {
     let mut map = map_spec.build();
     let mut key_set = KeySet::default();
     while map.load_factor() + INCREMENT < MAX_LOAD {
-        let record = grow(&mut *map, &mut key_set, INCREMENT);
-        record.write(&mut writers.grow, map_spec);
+        if let Some(record) = grow(&mut *map, &mut key_set, INCREMENT) {
+            record.write(&mut writers.grow, map_spec);
+        } else {
+            break;
+        }
     }
 }
 
@@ -221,7 +238,9 @@ fn probe_test(writers: &mut Writers, map_spec: MapSpec) {
     while load <= MAX_LOAD {
         let mut map = map_spec.build();
         let mut key_set = KeySet::default();
-        let _ = grow(&mut *map, &mut key_set, load);
+        if grow(&mut *map, &mut key_set, load).is_none() {
+            break;
+        };
 
         let record = probe(&*map, &key_set, 10_000);
         record.write(&mut writers.probe, map_spec);
@@ -237,7 +256,9 @@ fn churn_test(writers: &mut Writers, map_spec: MapSpec) {
     while load <= MAX_LOAD {
         let mut map = map_spec.build();
         let mut key_set = KeySet::default();
-        let _ = grow(&mut *map, &mut key_set, load);
+        if grow(&mut *map, &mut key_set, load).is_none() {
+            break;
+        };
 
         let record = churn(&mut *map, &mut key_set, 10_000);
         record.write(&mut writers.churn, map_spec);
@@ -250,7 +271,18 @@ fn main() {
 
     let mut writers = Writers::build(format!("robinhood"));
     for meta_bits in [0, 1, 2, 4, 8] {
+        println!("robinhood {meta_bits}");
         let map_spec = MapSpec::RobinHood(meta_bits);
+        grow_test(&mut writers, map_spec);
+        probe_test(&mut writers, map_spec);
+        churn_test(&mut writers, map_spec);
+    }
+
+    let mut writers = Writers::build(format!("cuckoo"));
+    for meta_bits in [0, 1, 2, 4, 8] {
+        println!("cuckoo {meta_bits}");
+
+        let map_spec = MapSpec::Cuckoo(meta_bits);
         grow_test(&mut writers, map_spec);
         probe_test(&mut writers, map_spec);
         churn_test(&mut writers, map_spec);

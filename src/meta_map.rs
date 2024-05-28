@@ -97,7 +97,7 @@ impl MetaMap {
 
         let start = bucket * self.bits;
         let end = start + self.bits;
-        self.bitvec[start..end].not_all()
+        self.bitvec[start..end].not_any()
     }
 
     // true means definitely a tombstone.
@@ -138,21 +138,22 @@ impl MetaMap {
         }
     }
 
-    pub fn hint_match(&self, bucket: usize, raw_hash: u64) -> bool {
+    // returns true if it's definitely not a match.
+    pub fn hint_not_match(&self, bucket: usize, raw_hash: u64) -> bool {
         if self.bits == 0 {
             return false;
         }
         if self.bits == 1 {
-            return *self.bitvec.get(bucket).unwrap();
+            return !*self.bitvec.get(bucket).unwrap();
         }
 
         let bits_remaining = self.bits - 1;
         let start = bucket * self.bits;
         let end = start + self.bits;
 
-        *self.bitvec.get(start).unwrap() && {
+        !*self.bitvec.get(start).unwrap() || {
             let high_bits = &raw_hash.view_bits::<Msb0>()[..bits_remaining];
-            &self.bitvec[start + 1..end] == high_bits
+            &self.bitvec[start + 1..end] != high_bits
         }
     }
 }
