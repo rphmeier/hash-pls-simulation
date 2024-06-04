@@ -6,11 +6,13 @@ use std::fs::File;
 use cuckoo::Cuckoo;
 use robinhood::RobinHood;
 use three_ary_cuckoo::ThreeAryCuckoo;
+use triangular_probing::TriaProb;
 
 mod cuckoo;
 mod meta_map;
 mod robinhood;
 mod three_ary_cuckoo;
+mod triangular_probing;
 
 #[derive(Default)]
 struct KeySet {
@@ -216,6 +218,7 @@ impl MapSpec {
             MapSpec::RobinHood(meta_bits) => meta_bits,
             MapSpec::Cuckoo(meta_bits) => meta_bits,
             MapSpec::ThreeAryCuckoo(meta_bits) => meta_bits,
+            MapSpec::TriaProb(meta_bits) => meta_bits,
         }
     }
 }
@@ -226,7 +229,7 @@ fn grow_test(writers: &mut Writers, map_spec: MapSpec) {
 
     let mut map = map_spec.build();
     let mut key_set = KeySet::default();
-    while map.load_factor() + INCREMENT < MAX_LOAD {
+    while dbg!(map.load_factor() + INCREMENT) < MAX_LOAD {
         if let Some(record) = grow(&mut *map, &mut key_set, INCREMENT) {
             record.write(&mut writers.grow, map_spec);
         } else {
@@ -274,20 +277,41 @@ fn churn_test(writers: &mut Writers, map_spec: MapSpec) {
 fn main() {
     std::fs::create_dir_all("out").unwrap();
 
-    let mut writers = Writers::build(format!("robinhood"));
-    for meta_bits in [0, 1, 2, 4, 8] {
-        println!("robinhood {meta_bits}");
-        let map_spec = MapSpec::RobinHood(meta_bits);
-        grow_test(&mut writers, map_spec);
-        probe_test(&mut writers, map_spec);
-        churn_test(&mut writers, map_spec);
-    }
+    //let mut writers = Writers::build(format!("robinhood"));
+    //for meta_bits in [0, 1, 2, 4, 8] {
+    //    println!("robinhood {meta_bits}");
+    //    let map_spec = MapSpec::RobinHood(meta_bits);
+    //    grow_test(&mut writers, map_spec);
+    //    probe_test(&mut writers, map_spec);
+    //    churn_test(&mut writers, map_spec);
+    //}
 
-    let mut writers = Writers::build(format!("cuckoo"));
-    for meta_bits in [0, 1, 2, 4, 8] {
-        println!("cuckoo {meta_bits}");
+    //let mut writers = Writers::build(format!("cuckoo"));
+    //for meta_bits in [0, 1, 2, 4, 8] {
+    //    println!("cuckoo {meta_bits}");
 
-        let map_spec = MapSpec::Cuckoo(meta_bits);
+    //    let map_spec = MapSpec::Cuckoo(meta_bits);
+    //    grow_test(&mut writers, map_spec);
+    //    probe_test(&mut writers, map_spec);
+    //    churn_test(&mut writers, map_spec);
+    //}
+
+    //let mut writers = Writers::build(format!("3arycuckoo"));
+    //for meta_bits in [0, 1, 2, 4, 8] {
+    //    println!("3arycuckoo {meta_bits}");
+
+    //    let map_spec = MapSpec::ThreeAryCuckoo(meta_bits);
+    //    grow_test(&mut writers, map_spec);
+    //    probe_test(&mut writers, map_spec);
+    //    churn_test(&mut writers, map_spec);
+    //}
+
+    let mut writers = Writers::build(format!("triaprob"));
+    //for meta_bits in [0, 1, 2, 4, 8] {
+    for meta_bits in [0] {
+        println!("triangular_probing {meta_bits}");
+
+        let map_spec = MapSpec::TriaProb(meta_bits);
         grow_test(&mut writers, map_spec);
         probe_test(&mut writers, map_spec);
         churn_test(&mut writers, map_spec);
