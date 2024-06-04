@@ -126,5 +126,4 @@ for file in os.listdir("out"):
     filename = os.fsdecode(file)
     if filename.endswith(".csv"):
         (test, mapkind) = parse_filename(filename)
-        if mapkind == "triaprob":
-            plot(filename, test, mapkind)
+        plot(filename, test, mapkind)
