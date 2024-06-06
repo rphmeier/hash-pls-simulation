@@ -3,9 +3,6 @@ use crate::{Map, Probe, Update};
 use ahash::RandomState;
 use rand::prelude::*;
 
-// extra hashers for avoiding collisions.
-const HASHER_COUNT: usize = 6;
-
 // dummy hash-set for u64 keys.
 //
 // implements 3-ary cuckoo hashing.
@@ -19,7 +16,7 @@ pub struct ThreeAryCuckoo {
 impl ThreeAryCuckoo {
     pub fn new(capacity: usize, meta_bits: usize) -> Self {
         ThreeAryCuckoo {
-            hashers: (0..HASHER_COUNT).map(|_| RandomState::new()).collect(),
+            hashers: (0..3).map(|_| RandomState::new()).collect(),
             buckets: vec![None; capacity],
             meta: MetaMap::new(capacity, meta_bits),
             len: 0,
@@ -29,24 +26,20 @@ impl ThreeAryCuckoo {
     // (hash, [bucket_a, bucket_b, bucket_c])
     fn buckets(&self, key: u64) -> (u64, [usize; 3]) {
         let hash_a = self.hashers[0].hash_one(key);
-        let h = |h_i: usize| (self.hashers[h_i].hash_one(key) % self.buckets.len() as u64) as usize;
+        let h = |h_i: usize, len: usize| (self.hashers[h_i].hash_one(key) % len as u64) as usize;
 
-        let bucket_a = h(0);
-        let mut bucket_b = h(1);
-        let mut bucket_c = h(2);
+        let a_map_len = self.buckets.len() / 3;
+        let b_map_len = a_map_len;
+        let c_map_len = a_map_len + self.buckets.len() % 3;
+
+        let bucket_a = h(0, a_map_len);
+        let mut bucket_b = h(1, b_map_len) + a_map_len;
+        let mut bucket_c = h(2, c_map_len) + (a_map_len * 2);
 
         // resolve collisions by re-hashing.
         let mut hasher_index = 3;
 
-        while bucket_b == bucket_a {
-            bucket_b = h(hasher_index);
-            hasher_index += 1;
-        }
-
-        while bucket_c == bucket_a || bucket_c == bucket_b {
-            bucket_c = h(hasher_index);
-            hasher_index += 1; 
-        }
+        assert!(bucket_a != bucket_b && bucket_b != bucket_c && bucket_a != bucket_c);
 
         (hash_a, [bucket_a, bucket_b, bucket_c])
     }
