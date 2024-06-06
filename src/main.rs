@@ -89,6 +89,8 @@ fn grow(map: &mut dyn Map, keys: &mut KeySet, increment: f64) -> Option<Record> 
 
         if !update.completed {
             return None;
+        } else if update.total_probes > 128 {
+            return None;
         }
 
         probes.record(update.total_probes as u64).unwrap();
@@ -198,6 +200,7 @@ enum MapSpec {
     RobinHood(usize),
     Cuckoo(usize),
     ThreeAryCuckoo(usize),
+    TriaProb(usize),
 }
 
 impl MapSpec {
@@ -206,6 +209,7 @@ impl MapSpec {
             MapSpec::RobinHood(meta_bits) => Box::new(RobinHood::new(SIZE, meta_bits)),
             MapSpec::Cuckoo(meta_bits) => Box::new(Cuckoo::new(SIZE, meta_bits)),
             MapSpec::ThreeAryCuckoo(meta_bits) => Box::new(ThreeAryCuckoo::new(SIZE, meta_bits)),
+            MapSpec::TriaProb(meta_bits) => Box::new(TriaProb::new(SIZE, meta_bits)),
         }
     }
 
@@ -225,7 +229,7 @@ impl MapSpec {
 
 fn grow_test(writers: &mut Writers, map_spec: MapSpec) {
     const INCREMENT: f64 = 0.01;
-    const MAX_LOAD: f64 = 0.95;
+    const MAX_LOAD: f64 = 0.98;
 
     let mut map = map_spec.build();
     let mut key_set = KeySet::default();
@@ -239,8 +243,8 @@ fn grow_test(writers: &mut Writers, map_spec: MapSpec) {
 }
 
 fn probe_test(writers: &mut Writers, map_spec: MapSpec) {
-    const INCREMENT: f64 = 0.05;
-    const MAX_LOAD: f64 = 0.9;
+    const INCREMENT: f64 = 0.02;
+    const MAX_LOAD: f64 = 0.98;
 
     let mut load = 0.1;
     while load <= MAX_LOAD {
@@ -257,8 +261,8 @@ fn probe_test(writers: &mut Writers, map_spec: MapSpec) {
 }
 
 fn churn_test(writers: &mut Writers, map_spec: MapSpec) {
-    const INCREMENT: f64 = 0.05;
-    const MAX_LOAD: f64 = 0.9;
+    const INCREMENT: f64 = 0.02;
+    const MAX_LOAD: f64 = 0.98;
 
     let mut load = 0.1;
     while load <= MAX_LOAD {
@@ -311,16 +315,6 @@ fn main() {
         println!("triangular_probing {meta_bits}");
 
         let map_spec = MapSpec::TriaProb(meta_bits);
-        grow_test(&mut writers, map_spec);
-        probe_test(&mut writers, map_spec);
-        churn_test(&mut writers, map_spec);
-    }
-
-    let mut writers = Writers::build(format!("3arycuckoo"));
-    for meta_bits in [0, 1, 2, 4, 8] {
-        println!("3arycuckoo {meta_bits}");
-
-        let map_spec = MapSpec::ThreeAryCuckoo(meta_bits);
         grow_test(&mut writers, map_spec);
         probe_test(&mut writers, map_spec);
         churn_test(&mut writers, map_spec);
