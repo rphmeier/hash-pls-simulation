@@ -86,6 +86,11 @@ impl MetaMap {
         }
     }
 
+    // Get the number of bits in the meta-map.
+    pub fn bits(&self) -> usize {
+        self.bits
+    }
+
     // true means definitely empty.
     pub fn hint_empty(&self, bucket: usize) -> bool {
         if self.bits == 0 {
