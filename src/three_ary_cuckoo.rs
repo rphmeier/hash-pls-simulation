@@ -1,15 +1,16 @@
 use crate::meta_map::{MetaMap, Metadata};
 use crate::{Map, Probe, Update};
 use ahash::RandomState;
+use rand::prelude::*;
 
-const HASHER_COUNT: usize = 3;
+// extra hashers for avoiding collisions.
+const HASHER_COUNT: usize = 6;
 
 // dummy hash-set for u64 keys.
 //
 // implements 3-ary cuckoo hashing.
 pub struct ThreeAryCuckoo {
     hashers: Vec<RandomState>,
-    bucket_size: usize,
     buckets: Vec<Option<u64>>,
     meta: MetaMap,
     len: usize,
@@ -20,7 +21,6 @@ impl ThreeAryCuckoo {
         ThreeAryCuckoo {
             hashers: (0..HASHER_COUNT).map(|_| RandomState::new()).collect(),
             buckets: vec![None; capacity],
-            bucket_size: capacity / 3,
             meta: MetaMap::new(capacity, meta_bits),
             len: 0,
         }
@@ -29,14 +29,24 @@ impl ThreeAryCuckoo {
     // (hash, [bucket_a, bucket_b, bucket_c])
     fn buckets(&self, key: u64) -> (u64, [usize; 3]) {
         let hash_a = self.hashers[0].hash_one(key);
-        let bucket_a = (hash_a % self.bucket_size as u64) as usize;
-        let mut bucket_b = (self.hashers[1].hash_one(key) % self.bucket_size as u64) as usize;
-        let mut bucket_c = (self.hashers[2].hash_one(key) % self.bucket_size as u64) as usize;
+        let h = |h_i: usize| (self.hashers[h_i].hash_one(key) % self.buckets.len() as u64) as usize;
 
-        // each bucket has the same size, `self.bucket_size`,
-        // but they live in the same array just with different offsets
-        bucket_b += self.bucket_size;
-        bucket_c += 2 * self.bucket_size;
+        let bucket_a = h(0);
+        let mut bucket_b = h(1);
+        let mut bucket_c = h(2);
+
+        // resolve collisions by re-hashing.
+        let mut hasher_index = 3;
+
+        while bucket_b == bucket_a {
+            bucket_b = h(hasher_index);
+            hasher_index += 1;
+        }
+
+        while bucket_c == bucket_a || bucket_c == bucket_b {
+            bucket_c = h(hasher_index);
+            hasher_index += 1; 
+        }
 
         (hash_a, [bucket_a, bucket_b, bucket_c])
     }
@@ -118,13 +128,9 @@ impl Map for ThreeAryCuckoo {
         {
             let (hash, [bucket_a, bucket_b, bucket_c]) = key_info;
 
-            // TODO: not sure why in cuckoo.rs the presence check
-            // is applied only to bucket_b and not bucket_a
-            //
-            // I think that this early check could be applied to all buckets
             if !self.meta.hint_not_match(bucket_a, hash) {
                 update.total_probes += 1;
-                if self.buckets[bucket_a] == Some(key) {
+                if self.buckets[bucket_b] == Some(key) {
                     return update;
                 }
             }
@@ -146,47 +152,67 @@ impl Map for ThreeAryCuckoo {
 
         self.len += 1;
 
-        let mut target_bucket_index = 0;
+        let mut buckets_to_use = [true, true, true];
+
+        // all targets full. evict randomly.
         for _ in 0..MAX_CHAIN {
             let (hash, buckets) = key_info;
-            let target_bucket = buckets[target_bucket_index];
 
-            if self.meta.hint_empty(target_bucket) {
-                if active_key != key {
-                    update.total_writes += 1;
-                }
-                self.set_bucket(target_bucket, active_key, hash);
-                return update;
-            }
+            let bucket_indices: Vec<_> = buckets_to_use
+                .clone()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, should_use)| should_use.then(|| buckets[i]))
+                .collect();
 
-            update.total_probes += 1;
-            let swap_key = match self.buckets[target_bucket] {
-                None => {
-                    // This is reach only if metabits = 0
-                    // thus there is not knowledge of presence
+            // if there is an empty bucket, use that.
+            for &bucket_index in &bucket_indices {
+                if self.meta.hint_empty(bucket_index) {
                     if active_key != key {
                         update.total_writes += 1;
                     }
-
-                    self.set_bucket(target_bucket, active_key, hash);
+                    self.set_bucket(bucket_index, active_key, hash);
                     return update;
-                }
-                Some(k) => {
-                    if k == active_key {
-                        // TODO: In which scenario is this reachable?
-                        unreachable!();
+                } else if self.meta.bits() == 0 {
+                    update.total_probes += 1;
+                    if self.buckets[bucket_index].is_none() {
+                        if active_key != key {
+                            update.total_writes += 1;
+                        }
+                        self.set_bucket(bucket_index, active_key, hash);
+                        return update;
                     }
+                }
+            }
 
-                    update.total_writes += 1;
-                    self.set_bucket(target_bucket, active_key, hash);
-                    k
+            // no bucket is empty. choose one at random.
+            let evict_bucket = loop {
+                let evict = rand::thread_rng().gen_range(0..3);
+                if buckets_to_use[evict] {
+                    break buckets[evict];
                 }
             };
 
+            // in this case we've already probed all 3 buckets and don't double count
+            if self.meta.bits() > 0 {
+                update.total_probes += 1;
+            }
+
+            let swap_key = self.buckets[evict_bucket].unwrap();
+            update.total_writes += 1;
+            self.set_bucket(evict_bucket, active_key, hash);
+
             key_info = self.buckets(swap_key);
 
-            // take the next bucket
-            target_bucket_index = (target_bucket_index + 1) % 3;
+            // the index of this bucket, as seen from the swapped key.
+            buckets_to_use = if evict_bucket == key_info.1[0] {
+                [false, true, true]
+            } else if evict_bucket == key_info.1[1] {
+                [true, false, true]
+            } else {
+                [true, true, false]
+            };
+
             active_key = swap_key;
         }
 
