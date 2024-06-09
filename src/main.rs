@@ -3,11 +3,13 @@ use hdrhistogram::Histogram;
 use rand::prelude::*;
 use std::fs::File;
 
+use blocked_cuckoo::BlockedCuckoo;
 use cuckoo::Cuckoo;
 use robinhood::RobinHood;
 use three_ary_cuckoo::ThreeAryCuckoo;
 use triangular_probing::TriaProb;
 
+mod blocked_cuckoo;
 mod cuckoo;
 mod meta_map;
 mod robinhood;
@@ -198,6 +200,7 @@ const SIZE: usize = 1 << 20;
 #[derive(Clone, Copy)]
 enum MapSpec {
     RobinHood(usize),
+    BlockedCuckoo,
     Cuckoo(usize),
     ThreeAryCuckoo(usize),
     TriaProb(usize),
@@ -208,6 +211,7 @@ impl MapSpec {
         match *self {
             MapSpec::RobinHood(meta_bits) => Box::new(RobinHood::new(SIZE, meta_bits)),
             MapSpec::Cuckoo(meta_bits) => Box::new(Cuckoo::new(SIZE, meta_bits)),
+            MapSpec::BlockedCuckoo => Box::new(BlockedCuckoo::new(SIZE)),
             MapSpec::ThreeAryCuckoo(meta_bits) => Box::new(ThreeAryCuckoo::new(SIZE, meta_bits)),
             MapSpec::TriaProb(meta_bits) => Box::new(TriaProb::new(SIZE, meta_bits)),
         }
@@ -221,6 +225,7 @@ impl MapSpec {
         match *self {
             MapSpec::RobinHood(meta_bits) => meta_bits,
             MapSpec::Cuckoo(meta_bits) => meta_bits,
+            MapSpec::BlockedCuckoo => 0,
             MapSpec::ThreeAryCuckoo(meta_bits) => meta_bits,
             MapSpec::TriaProb(meta_bits) => meta_bits,
         }
@@ -319,4 +324,12 @@ fn main() {
         probe_test(&mut writers, map_spec);
         churn_test(&mut writers, map_spec);
     }
+
+    let mut writers = Writers::build(format!("blockedcuckoo"));
+    println!("blocked_cuckoo");
+
+    let map_spec = MapSpec::BlockedCuckoo;
+    grow_test(&mut writers, map_spec);
+    probe_test(&mut writers, map_spec);
+    churn_test(&mut writers, map_spec);
 }
